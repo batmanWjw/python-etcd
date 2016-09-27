@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
 """
 .. module:: python-etcd
    :synopsis: A python etcd client.
@@ -6,13 +9,8 @@
 
 
 """
+
 import logging
-try:
-    # Python 3
-    from http.client import HTTPException
-except ImportError:
-    # Python 2
-    from httplib import HTTPException
 import socket
 import urllib3
 import urllib3.util
@@ -20,12 +18,18 @@ import json
 import ssl
 import dns.resolver
 from functools import wraps
-import etcd
-
 try:
     from urlparse import urlparse
 except ImportError:
     from urllib.parse import urlparse
+try:
+    # Python 3
+    from http.client import HTTPException
+except ImportError:
+    # Python 2
+    from httplib import HTTPException
+
+import etcd
 
 
 _log = logging.getLogger(__name__)
@@ -129,7 +133,7 @@ class Client(object):
         def uri(protocol, host, port):
             return '%s://%s:%d' % (protocol, host, port)
 
-        if not isinstance(host, tuple):
+        if isinstance(host, basestring):
             self._machines_cache = []
             self._base_uri = uri(self._protocol, host, port)
         else:
@@ -156,6 +160,12 @@ class Client(object):
 
         if self._read_timeout > 0:
             kw['timeout'] = self._read_timeout
+
+        if protocol == 'https':
+            # If we don't allow TLSv1, clients using older version of OpenSSL
+            # (<1.0) won't be able to connect.
+            _log.debug("HTTPS enabled.")
+            kw['ssl_version'] = ssl.PROTOCOL_TLSv1
 
         if cert:
             if isinstance(cert, tuple):
@@ -390,7 +400,7 @@ class Client(object):
         True
         """
         try:
-            self.get(key)
+            self.get(key, val_format='raw')
             return True
         except etcd.EtcdKeyNotFound:
             return False
@@ -438,6 +448,8 @@ class Client(object):
         key = self._sanitize_key(key)
         params = {}
         if value is not None:
+            if not isinstance(value, basestring):
+                value = json.dumps(value)
             params['value'] = value
 
         if ttl is not None:
@@ -685,13 +697,13 @@ class Client(object):
         """
         return self.write(key, value, ttl=ttl)
 
-    def get(self, key):
+    def get(self, key, val_format='json'):
         """
         Returns the value of the key 'key'.
 
         Args:
             key (str):  Key.
-
+            val_format (str): the format of value, only support json right now
         Returns:
             client.EtcdResult
 
@@ -702,7 +714,8 @@ class Client(object):
         'value'
 
         """
-        return self.read(key)
+        result = self.read(key)
+        return json.loads(result.value) if val_format == 'json' else result.value
 
     def watch(self, key, index=None, timeout=None, recursive=None):
         """
@@ -714,6 +727,8 @@ class Client(object):
             index (int): Index to start from.
 
             timeout (int):  max seconds to wait for a read.
+
+            recursive (bool): if we want to recursively watch a directory, set it to true
 
         Returns:
             client.EtcdResult
@@ -729,11 +744,9 @@ class Client(object):
         """
         _log.debug("About to wait on key %s, index %s", key, index)
         if index:
-            return self.read(key, wait=True, waitIndex=index, timeout=timeout,
-                             recursive=recursive)
+            return self.read(key, wait=True, waitIndex=index, timeout=timeout, recursive=recursive)
         else:
-            return self.read(key, wait=True, timeout=timeout,
-                             recursive=recursive)
+            return self.read(key, wait=True, timeout=timeout, recursive=recursive)
 
     def eternal_watch(self, key, index=None, recursive=None):
         """
